@@ -13,9 +13,9 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
-import kotlinx.coroutines.flow.first
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     name = "coffee_settings",
@@ -27,7 +27,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
 data class CoffeeState(
     val isActive: Boolean = false,
     val duration: Int = 5,
-    val endTime: Long = 0L
+    val endTime: Long = 0L,
+    val isAlternateMode: Boolean = false
 )
 
 class CoffeeDataStore(context: Context) {
@@ -39,6 +40,7 @@ class CoffeeDataStore(context: Context) {
         private val SELECTED_DURATION = intPreferencesKey("selected_duration")
         private val END_TIME = longPreferencesKey("end_time")
         private val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
+        private val ALTERNATE_MODE = booleanPreferencesKey("alternate_mode")
         private const val DEFAULT_DURATION = 5
     }
 
@@ -52,13 +54,18 @@ class CoffeeDataStore(context: Context) {
             CoffeeState(
                 isActive = prefs[IS_ACTIVE] ?: false,
                 duration = prefs[SELECTED_DURATION] ?: DEFAULT_DURATION,
-                endTime = prefs[END_TIME] ?: 0L
+                endTime = prefs[END_TIME] ?: 0L,
+                isAlternateMode = prefs[ALTERNATE_MODE] ?: false
             )
         }
         .distinctUntilChanged()
 
     fun observeIsActive(): Flow<Boolean> = coffeeState.map { it.isActive }.distinctUntilChanged()
     fun observeDuration(): Flow<Int> = coffeeState.map { it.duration }.distinctUntilChanged()
+
+    val alternateMode: Flow<Boolean> = preferencesFlow
+        .map { it[ALTERNATE_MODE] ?: false }
+        .distinctUntilChanged()
 
     suspend fun setCoffeeStatus(active: Boolean, endTime: Long = 0L) {
         appContext.dataStore.edit { preferences ->
@@ -80,6 +87,11 @@ class CoffeeDataStore(context: Context) {
     suspend fun setOnboardingComplete(complete: Boolean) {
         appContext.dataStore.edit { prefs ->
             prefs[ONBOARDING_COMPLETE] = complete
+        }
+    }
+    suspend fun setAlternateMode(enabled: Boolean) {
+        appContext.dataStore.edit { preferences ->
+            preferences[ALTERNATE_MODE] = enabled
         }
     }
 }

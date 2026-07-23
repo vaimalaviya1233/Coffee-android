@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 import android.service.quicksettings.TileService
 import androidx.core.app.NotificationCompat
 import androidx.glance.appwidget.updateAll
@@ -43,7 +44,7 @@ class CoffeeService : Service() {
     }
     private lateinit var notificationBuilder: NotificationCompat.Builder
     private var endTimeMillis: Long = 0
-
+    private var originalTimeout: Int? = null
     private val timerRunnable = object : Runnable {
         override fun run() {
             val remainingMillis = endTimeMillis - System.currentTimeMillis()
@@ -90,12 +91,6 @@ class CoffeeService : Service() {
         createNotificationChannel()
         initNotificationBuilder()
 
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "Coffee::ScreenAwakeLock"
-        ).apply { setReferenceCounted(false) }
-
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_USER_PRESENT)
@@ -138,7 +133,7 @@ class CoffeeService : Service() {
             dataStore.setCoffeeStatus(active = true, endTime = endTimeMillis)
 
             val remainingMinutes = ((endTimeMillis - System.currentTimeMillis()) / 60_000L).toInt()
-            manageWakeLock(remainingMinutes)
+            updateScreenRetention(remainingMinutes)
 
             handler.removeCallbacks(timerRunnable)
             handler.post(timerRunnable)
@@ -156,6 +151,7 @@ class CoffeeService : Service() {
         serviceScope.launch {
             dataStore.setCoffeeStatus(active = true, endTime = endTime)
             updateTileAndWidgets()
+            updateScreenRetention(durationMinutes)
         }
 
         val initialText = if (durationMinutes == 0) {
@@ -171,19 +167,48 @@ class CoffeeService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        manageWakeLock(durationMinutes)
-
         handler.removeCallbacks(timerRunnable)
         if (durationMinutes > 0) {
             handler.post(timerRunnable)
         }
     }
 
+    private suspend fun updateScreenRetention(durationMinutes: Int) {
+        val isAlternateMode = dataStore.alternateMode.first()
+        if (isAlternateMode && Settings.System.canWrite(applicationContext)) {
+            if (originalTimeout == null) {
+                try {
+                    originalTimeout = Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT)
+                    Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, Int.MAX_VALUE)
+                } catch (ignored: Exception) {
+                    originalTimeout = null
+                    manageWakeLock(durationMinutes)
+                }
+            }
+            try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (ignored: Exception) {}
+        } else {
+            restoreTimeout()
+            manageWakeLock(durationMinutes)
+        }
+    }
+
     private fun stopCoffee() {
+        restoreTimeout()
         serviceScope.launch {
             dataStore.setCoffeeStatus(false)
             updateTileAndWidgets()
             stopSelf()
+        }
+    }
+
+    private fun restoreTimeout() {
+        originalTimeout?.let { timeout ->
+            if (Settings.System.canWrite(applicationContext)) {
+                try {
+                    Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, timeout)
+                } catch (ignored: Exception) {}
+            }
+            originalTimeout = null
         }
     }
 
@@ -192,15 +217,21 @@ class CoffeeService : Service() {
             try {
                 if (lock.isHeld) lock.release()
             } catch (ignored: Exception) {}
-
-            val timeout = if (durationMinutes > 0) {
-                val remainingMillis = endTimeMillis - System.currentTimeMillis()
-                remainingMillis.coerceAtLeast(0L) + 2000L
-            } else {
-                12 * 60 * 60 * 1000L
-            }
-            lock.acquire(timeout)
         }
+
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "Coffee::ScreenAwakeLock"
+        ).apply { setReferenceCounted(false) }
+
+        val timeout = if (durationMinutes > 0) {
+            val remainingMillis = endTimeMillis - System.currentTimeMillis()
+            remainingMillis.coerceAtLeast(0L) + 2000L
+        } else {
+            12 * 60 * 60 * 1000L
+        }
+        wakeLock?.acquire(timeout)
     }
 
     private fun initNotificationBuilder() {
@@ -241,6 +272,7 @@ class CoffeeService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        restoreTimeout()
         serviceScope.cancel()
         handler.removeCallbacksAndMessages(null)
 
