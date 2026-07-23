@@ -11,7 +11,12 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -22,9 +27,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 data class PermissionHandlerState(
     val isNotificationGranted: Boolean,
     val isBatteryOptimizationIgnored: Boolean,
+    val isWriteSettingsGranted: Boolean,
     val shouldShowSettingsPrompt: Boolean,
     val requestNotificationPermission: () -> Unit,
     val requestBatteryExemption: () -> Unit,
+    val requestWriteSettingsPermission: () -> Unit,
     val openSettings: () -> Unit,
     val dismissSettingsPrompt: () -> Unit
 )
@@ -37,6 +44,7 @@ fun rememberPermissionHandler(): PermissionHandlerState {
 
     var isNotificationGranted by remember { mutableStateOf(context.hasNotificationPermission()) }
     var isBatteryIgnored by remember { mutableStateOf(context.isBatteryOptimizationIgnored()) }
+    var isWriteSettingsGranted by remember { mutableStateOf(Settings.System.canWrite(context)) }
     var hasAskedNotification by remember { mutableStateOf(false) }
     var shouldShowSettingsPrompt by remember { mutableStateOf(false) }
 
@@ -45,6 +53,7 @@ fun rememberPermissionHandler(): PermissionHandlerState {
             if (event == Lifecycle.Event.ON_RESUME) {
                 isNotificationGranted = context.hasNotificationPermission()
                 isBatteryIgnored = context.isBatteryOptimizationIgnored()
+                isWriteSettingsGranted = Settings.System.canWrite(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -59,10 +68,11 @@ fun rememberPermissionHandler(): PermissionHandlerState {
         isNotificationGranted = granted
     }
 
-    return remember(isNotificationGranted, isBatteryIgnored, shouldShowSettingsPrompt) {
+    return remember(isNotificationGranted, isBatteryIgnored, isWriteSettingsGranted, shouldShowSettingsPrompt) {
         PermissionHandlerState(
             isNotificationGranted = isNotificationGranted,
             isBatteryOptimizationIgnored = isBatteryIgnored,
+            isWriteSettingsGranted = isWriteSettingsGranted,
             shouldShowSettingsPrompt = shouldShowSettingsPrompt,
             requestNotificationPermission = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -84,6 +94,13 @@ fun rememberPermissionHandler(): PermissionHandlerState {
             requestBatteryExemption = {
                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                     data = Uri.parse("package:${context.packageName}")
+                }
+                context.startActivity(intent)
+            },
+            requestWriteSettingsPermission = {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(intent)
             },
