@@ -15,13 +15,11 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,7 +27,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -38,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,9 +59,11 @@ import com.openappslabs.coffee.R
 import com.openappslabs.coffee.data.CoffeeDataStore
 import com.openappslabs.coffee.services.CoffeeService
 import com.openappslabs.coffee.services.CoffeeTileService
+import com.openappslabs.coffee.ui.components.AlternateMode
 import com.openappslabs.coffee.ui.components.CoffeeCard
 import com.openappslabs.coffee.ui.components.SplitButton
 import com.openappslabs.coffee.ui.components.WidgetSheet
+import com.openappslabs.coffee.utils.rememberPermissionHandler
 import com.openappslabs.coffee.widgets.VARIANT_KEY
 import com.openappslabs.coffee.widgets.createApiPreview
 import kotlinx.coroutines.launch
@@ -83,10 +83,20 @@ fun HomeScreen(
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
     val dataStore = remember { CoffeeDataStore(context.applicationContext) }
+    val coffeeActive by dataStore.observeIsActive().collectAsState(initial = false)
+    val alternateModeEnabled by dataStore.alternateMode.collectAsState(initial = false)
+    val permissionHandler = rememberPermissionHandler()
+
     var selectedShapeName by remember { mutableStateOf("Circle") }
     var selectedVariant by remember { mutableStateOf(initialVariant) }
     var showWidgetSheet by remember {
         mutableStateOf(openWidgetSheet || appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID)
+    }
+
+    LaunchedEffect(permissionHandler.isWriteSettingsGranted) {
+        if (!permissionHandler.isWriteSettingsGranted && alternateModeEnabled) {
+            dataStore.setAlternateMode(false)
+        }
     }
 
     LaunchedEffect(appWidgetId) {
@@ -188,6 +198,24 @@ fun HomeScreen(
                     selectedVariant = "Normal"
                     showWidgetSheet = true
                 }
+            )
+
+            AlternateMode(
+                checked = alternateModeEnabled,
+                onCheckedChange = { enabled ->
+                    scope.launch {
+                        if (enabled) {
+                            if (permissionHandler.isWriteSettingsGranted) {
+                                dataStore.setAlternateMode(true)
+                            } else {
+                                permissionHandler.requestWriteSettingsPermission()
+                            }
+                        } else {
+                            dataStore.setAlternateMode(false)
+                        }
+                    }
+                },
+                enabled = !coffeeActive
             )
         }
     }
