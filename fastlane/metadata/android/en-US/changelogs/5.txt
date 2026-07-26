@@ -1,0 +1,5 @@
+Coffee 1.4.0
+
+What's Changed
+- Added alternate mode for the devices with aggressive battery optimization which used to kill app instantly(eg. Samsung). Hopefully this should resolve the issue.
+- Code optimization
